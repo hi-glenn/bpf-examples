@@ -1024,13 +1024,20 @@ static void xsk_populate_fill_ring(struct xsk_umem_info *umem)
 	int ret, i;
 	u32 idx;
 
+    // 查看 fq ring 中有无指定长度的剩余空间, idx 被置为起始位置;
 	ret = xsk_ring_prod__reserve(&umem->fq,
 				     XSK_RING_PROD__DEFAULT_NUM_DESCS * 2, &idx);
+
+    // 若没有指定大小的空余空间，则直接报错退出
 	if (ret != XSK_RING_PROD__DEFAULT_NUM_DESCS * 2)
 		exit_with_error(-ret);
+
+    // 逐个填充
 	for (i = 0; i < XSK_RING_PROD__DEFAULT_NUM_DESCS * 2; i++)
 		*xsk_ring_prod__fill_addr(&umem->fq, idx++) =
 			i * opt_xsk_frame_size;
+
+    // 提交
 	xsk_ring_prod__submit(&umem->fq, XSK_RING_PROD__DEFAULT_NUM_DESCS * 2);
 }
 
@@ -1394,6 +1401,7 @@ static inline void complete_tx_l2fwd(struct xsk_socket_info *xsk)
 	unsigned int rcvd;
 	size_t ndescs;
 
+    // 若没有待发送的数据包，则直接返回
 	if (!xsk->outstanding_tx)
 		return;
 
@@ -1411,28 +1419,36 @@ static inline void complete_tx_l2fwd(struct xsk_socket_info *xsk)
 		xsk->outstanding_tx;
 
 	/* re-add completed Tx buffers */
+	// 查看 cq 中有无指定数量的待释放空间
 	rcvd = xsk_ring_cons__peek(&umem->cq, ndescs, &idx_cq);
 	if (rcvd > 0) {
 		unsigned int i;
 		int ret;
 
+        // 查看 fq 中有无指定大小的空余空间
 		ret = xsk_ring_prod__reserve(&umem->fq, rcvd, &idx_fq);
 		while (ret != rcvd) {
+			// 循环查找 fq 中有无指定 rcvd 数量的空闲空间
 			if (ret < 0)
 				exit_with_error(-ret);
 			if (opt_busy_poll || xsk_ring_prod__needs_wakeup(&umem->fq)) {
 				xsk->app_stats.fill_fail_polls++;
+				// recvfrom 会消费 fq 中空间
 				recvfrom(xsk_socket__fd(xsk->xsk), NULL, 0, MSG_DONTWAIT, NULL,
 					 NULL);
 			}
 			ret = xsk_ring_prod__reserve(&umem->fq, rcvd, &idx_fq);
 		}
 
+        // 填充 fq 
 		for (i = 0; i < rcvd; i++)
 			*xsk_ring_prod__fill_addr(&umem->fq, idx_fq++) =
 				*xsk_ring_cons__comp_addr(&umem->cq, idx_cq++);
 
+        // fq 提交填充的空间数量
 		xsk_ring_prod__submit(&xsk->umem->fq, rcvd);
+
+		// cq 提交释放的空间数量
 		xsk_ring_cons__release(&xsk->umem->cq, rcvd);
 		xsk->outstanding_tx -= rcvd;
 	}
@@ -1726,6 +1742,7 @@ static void l2fwd(struct xsk_socket_info *xsk)
 
 	rcvd = xsk_ring_cons__peek(&xsk->rx, opt_batch_size, &idx_rx);
 	if (!rcvd) {
+		// 若没有收到包，则 recvfrom 一下再返回
 		if (opt_busy_poll || xsk_ring_prod__needs_wakeup(&xsk->umem->fq)) {
 			xsk->app_stats.rx_empty_polls++;
 			recvfrom(xsk_socket__fd(xsk->xsk), NULL, 0, MSG_DONTWAIT, NULL, NULL);
@@ -1733,6 +1750,7 @@ static void l2fwd(struct xsk_socket_info *xsk)
 		return;
 	}
 
+    // 查看 tq 中有无指定数量的空间
 	ret = xsk_ring_prod__reserve(&xsk->tx, rcvd, &idx_tx);
 	while (ret != rcvd) {
 		if (ret < 0)
@@ -2058,6 +2076,7 @@ int main(int argc, char **argv)
 			load_xdp_program();
 	}
 
+    // 为 umem 申请内存
 	/* Reserve memory for the umem. Use hugepages if unaligned chunk mode */
 	bufs = mmap(NULL, NUM_FRAMES * opt_xsk_frame_size,
 		    PROT_READ | PROT_WRITE,
@@ -2068,16 +2087,22 @@ int main(int argc, char **argv)
 	}
 
 	/* Create sockets... */
+	// 创建 FILL ring 和 COMPLETION ring
 	umem = xsk_configure_umem(bufs, NUM_FRAMES * opt_xsk_frame_size);
 	if (opt_bench == BENCH_RXDROP || opt_bench == BENCH_L2FWD) {
 		rx = true;
+		// 填充 FILL ring
 		xsk_populate_fill_ring(umem);
 	}
+
 	if (opt_bench == BENCH_L2FWD || opt_bench == BENCH_TXONLY)
 		tx = true;
+	
+	// 创建 af_xdp socket 并与 umem 绑定
 	for (i = 0; i < opt_num_xsks; i++)
 		xsks[num_socks++] = xsk_configure_socket(umem, rx, tx);
 
+    // 设置 socket 属性，如 SO_BUSY_POLL 等
 	for (i = 0; i < opt_num_xsks; i++)
 		apply_setsockopt(xsks[i]);
 
@@ -2090,6 +2115,7 @@ int main(int argc, char **argv)
 		for (i = 0; i < NUM_FRAMES; i++)
 			gen_eth_frame(umem, i * opt_xsk_frame_size);
 	}
+	// XSK_UMEM__DEFAULT_FRAME_SIZE: 4096; 向上取整
 	frames_per_pkt = (opt_pkt_size - 1) / XSK_UMEM__DEFAULT_FRAME_SIZE + 1;
 
 	if (load_xdp_prog && opt_bench != BENCH_TXONLY)
