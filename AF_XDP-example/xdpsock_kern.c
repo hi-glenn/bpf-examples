@@ -20,5 +20,8 @@ static unsigned int rr;
 SEC("xdp_sock") int xdp_sock_prog(struct xdp_md *ctx)
 {
 	rr = (rr + 1) & (num_socks - 1);
+
+	bpf_printk("\n-------------------------");
+	
 	return bpf_redirect_map(&xsks_map, rr, XDP_DROP);
 }
