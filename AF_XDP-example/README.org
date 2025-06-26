@@ -22,6 +22,8 @@ Here is the simplest command line for launching the rxdrop benchmark
 in this example:
 
 #+BEGIN_SRC sh
+./xdpsock -i enp5s0f1 -l -B
+
 sudo taskset -c <app core> ./xdpsock -i <interface> -q <queue_id> -r
 #+END_SRC
 
