@@ -1,3 +1,8 @@
+### RX Drop
+```bash
+taskset -c 13 ./xdpsock -i enp5s0f1 -q 0 -r -N -B -M  -Q
+```
+
 #+Title: AF_XDP socket sample application
 
 This is a sample application for AF_XDP sockets. It was originally in
